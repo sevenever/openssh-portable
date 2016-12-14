@@ -331,6 +331,8 @@ add_local_forward(Options *options, const struct Forward *newfwd)
 	fwd->connect_host = newfwd->connect_host;
 	fwd->connect_port = newfwd->connect_port;
 	fwd->connect_path = newfwd->connect_path;
+	fwd->username = newfwd->username;
+	fwd->password = newfwd->password;
 }
 
 /*
@@ -2147,6 +2149,7 @@ done:
  *	listenpath:connectpath
  *   dynamicfwd == 1
  *	[listenhost:]listenport
+ *	[listenhost:]listenport[:username:password]
  * returns number of arguments parsed or zero on error
  */
 int
@@ -2206,29 +2209,50 @@ parse_forward(struct Forward *fwd, const char *fwdspec, int dynamicfwd, int remo
 		break;
 
 	case 3:
-		if (fwdargs[0].ispath) {
-			fwd->listen_path = xstrdup(fwdargs[0].arg);
-			fwd->listen_port = PORT_STREAMLOCAL;
-			fwd->connect_host = xstrdup(fwdargs[1].arg);
-			fwd->connect_port = a2port(fwdargs[2].arg);
-		} else if (fwdargs[2].ispath) {
-			fwd->listen_host = xstrdup(fwdargs[0].arg);
-			fwd->listen_port = a2port(fwdargs[1].arg);
-			fwd->connect_path = xstrdup(fwdargs[2].arg);
-			fwd->connect_port = PORT_STREAMLOCAL;
+		if (dynamicfwd) {
+			if (fwdargs[0].ispath) {
+				fwd->listen_path = xstrdup(fwdargs[0].arg);
+				fwd->listen_port = PORT_STREAMLOCAL;
+			} else {
+				fwd->listen_host = NULL;
+				fwd->listen_port = a2port(fwdargs[0].arg);
+			}
+			fwd->username = xstrdup(fwdargs[1].arg);
+			fwd->password = xstrdup(fwdargs[2].arg);
+			fwd->connect_host = xstrdup("socks");
 		} else {
-			fwd->listen_host = NULL;
-			fwd->listen_port = a2port(fwdargs[0].arg);
-			fwd->connect_host = xstrdup(fwdargs[1].arg);
-			fwd->connect_port = a2port(fwdargs[2].arg);
+			if (fwdargs[0].ispath) {
+				fwd->listen_path = xstrdup(fwdargs[0].arg);
+				fwd->listen_port = PORT_STREAMLOCAL;
+				fwd->connect_host = xstrdup(fwdargs[1].arg);
+				fwd->connect_port = a2port(fwdargs[2].arg);
+			} else if (fwdargs[2].ispath) {
+				fwd->listen_host = xstrdup(fwdargs[0].arg);
+				fwd->listen_port = a2port(fwdargs[1].arg);
+				fwd->connect_path = xstrdup(fwdargs[2].arg);
+				fwd->connect_port = PORT_STREAMLOCAL;
+			} else {
+				fwd->listen_host = NULL;
+				fwd->listen_port = a2port(fwdargs[0].arg);
+				fwd->connect_host = xstrdup(fwdargs[1].arg);
+				fwd->connect_port = a2port(fwdargs[2].arg);
+			}
 		}
 		break;
 
 	case 4:
-		fwd->listen_host = xstrdup(fwdargs[0].arg);
-		fwd->listen_port = a2port(fwdargs[1].arg);
-		fwd->connect_host = xstrdup(fwdargs[2].arg);
-		fwd->connect_port = a2port(fwdargs[3].arg);
+		if (dynamicfwd) {
+			fwd->listen_host = xstrdup(fwdargs[0].arg);
+			fwd->listen_port = a2port(fwdargs[1].arg);
+			fwd->username = xstrdup(fwdargs[2].arg);
+			fwd->password = xstrdup(fwdargs[3].arg);
+			fwd->connect_host = xstrdup("socks");
+		} else {
+		    fwd->listen_host = xstrdup(fwdargs[0].arg);
+			fwd->listen_port = a2port(fwdargs[1].arg);
+			fwd->connect_host = xstrdup(fwdargs[2].arg);
+			fwd->connect_port = a2port(fwdargs[3].arg);
+		}
 		break;
 	default:
 		i = 0; /* failure */
@@ -2236,10 +2260,7 @@ parse_forward(struct Forward *fwd, const char *fwdspec, int dynamicfwd, int remo
 
 	free(p);
 
-	if (dynamicfwd) {
-		if (!(i == 1 || i == 2))
-			goto fail_free;
-	} else {
+	if (!dynamicfwd) {
 		if (!(i == 3 || i == 4)) {
 			if (fwd->connect_path == NULL &&
 			    fwd->listen_path == NULL)

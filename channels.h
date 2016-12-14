@@ -126,6 +126,8 @@ struct Channel {
 		/* path for unix domain sockets, or host name for forwards */
 	int     listening_port;	/* port being listened for forwards */
 	char   *listening_addr;	/* addr being listened for forwards */
+	char   *username;	/* username of dynamic forward */
+	char   *password;	/* password of dynamic forward */
 	int     host_port;	/* remote port to connect for forwards */
 	char   *remote_name;	/* remote hostname */
 

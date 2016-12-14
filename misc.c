@@ -1240,6 +1240,7 @@ forward_equals(const struct Forward *a, const struct Forward *b)
 	if (strcmp_maybe_null(a->connect_path, b->connect_path) == 0)
 		return 0;
 	/* allocated_port and handle are not checked */
+	/* socks5 username and password are not checked */
 	return 1;
 }
 
