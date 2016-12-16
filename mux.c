@@ -733,6 +733,7 @@ process_mux_open_fwd(u_int rid, Channel *c, Buffer *m, Buffer *r)
 	if (ftype == MUX_FWD_LOCAL || ftype == MUX_FWD_DYNAMIC) {
 		if (!channel_setup_local_fwd_listener(fwd.listen_host,
 		    fwd.listen_port, fwd.connect_host, fwd.connect_port,
+			fwd.username, fwd.password,
 		    options.gateway_ports)) {
  fail:
 			logit("slave-requested %s failed", fwd_desc);

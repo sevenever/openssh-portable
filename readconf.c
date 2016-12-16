@@ -289,6 +289,8 @@ add_local_forward(Options *options, const Forward *newfwd)
 	fwd->listen_port = newfwd->listen_port;
 	fwd->connect_host = newfwd->connect_host;
 	fwd->connect_port = newfwd->connect_port;
+	fwd->username = newfwd->username;
+	fwd->password = newfwd->password;
 }
 
 /*
@@ -1764,6 +1766,7 @@ fill_default_options(Options * options)
  *	[listenhost:]listenport:connecthost:connectport
  *   dynamicfwd == 1
  *	[listenhost:]listenport
+ *	[listenhost:]listenport[:username:password]
  * returns number of arguments parsed or zero on error
  */
 int
@@ -1802,17 +1805,33 @@ parse_forward(Forward *fwd, const char *fwdspec, int dynamicfwd, int remotefwd)
 		break;
 
 	case 3:
-		fwd->listen_host = NULL;
-		fwd->listen_port = a2port(fwdarg[0]);
-		fwd->connect_host = xstrdup(cleanhostname(fwdarg[1]));
-		fwd->connect_port = a2port(fwdarg[2]);
+		if (dynamicfwd) {
+			fwd->listen_host = NULL;
+			fwd->listen_port = a2port(fwdarg[0]);
+			fwd->username = xstrdup(fwdarg[1]);
+			fwd->password = xstrdup(fwdarg[2]);
+			fwd->connect_host = xstrdup("socks");
+		} else {
+			fwd->listen_host = NULL;
+			fwd->listen_port = a2port(fwdarg[0]);
+			fwd->connect_host = xstrdup(cleanhostname(fwdarg[1]));
+			fwd->connect_port = a2port(fwdarg[2]);
+		}
 		break;
 
 	case 4:
-		fwd->listen_host = xstrdup(cleanhostname(fwdarg[0]));
-		fwd->listen_port = a2port(fwdarg[1]);
-		fwd->connect_host = xstrdup(cleanhostname(fwdarg[2]));
-		fwd->connect_port = a2port(fwdarg[3]);
+		if (dynamicfwd) {
+			fwd->listen_host = xstrdup(cleanhostname(fwdarg[0]));
+			fwd->listen_port = a2port(fwdarg[1]);
+			fwd->username = xstrdup(fwdarg[2]);
+			fwd->password = xstrdup(fwdarg[3]);
+			fwd->connect_host = xstrdup("socks");
+		} else {
+			fwd->listen_host = xstrdup(cleanhostname(fwdarg[0]));
+			fwd->listen_port = a2port(fwdarg[1]);
+			fwd->connect_host = xstrdup(cleanhostname(fwdarg[2]));
+			fwd->connect_port = a2port(fwdarg[3]);
+		}
 		break;
 	default:
 		i = 0; /* failure */
@@ -1820,10 +1839,7 @@ parse_forward(Forward *fwd, const char *fwdspec, int dynamicfwd, int remotefwd)
 
 	free(p);
 
-	if (dynamicfwd) {
-		if (!(i == 1 || i == 2))
-			goto fail_free;
-	} else {
+	if (!dynamicfwd) {
 		if (!(i == 3 || i == 4))
 			goto fail_free;
 		if (fwd->connect_port <= 0)

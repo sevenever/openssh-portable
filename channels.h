@@ -123,6 +123,8 @@ struct Channel {
 		/* path for unix domain sockets, or host name for forwards */
 	int     listening_port;	/* port being listened for forwards */
 	char   *listening_addr;	/* addr being listened for forwards */
+	char   *username;	/* username of dynamic forward */
+	char   *password;	/* password of dynamic forward */
 	int     host_port;	/* remote port to connect for forwards */
 	char   *remote_name;	/* remote hostname */
 
@@ -270,7 +272,7 @@ Channel	*channel_connect_by_listen_address(u_short, char *, char *);
 int	 channel_request_remote_forwarding(const char *, u_short,
 	     const char *, u_short);
 int	 channel_setup_local_fwd_listener(const char *, u_short,
-	     const char *, u_short, int);
+	     const char *, u_short, const char *, const char *, int);
 int	 channel_request_rforward_cancel(const char *host, u_short port);
 int	 channel_setup_remote_fwd_listener(const char *, u_short, int *, int);
 int	 channel_cancel_rport_listener(const char *, u_short);

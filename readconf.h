@@ -25,6 +25,8 @@ typedef struct {
 	int	  connect_port;		/* Port to connect on connect_host. */
 	int	  allocated_port;	/* Dynamically allocated listen port */
 	int	  handle;		/* Handle for dynamic listen ports */
+	char	*username;		/* username of local forward socks5 */
+	char	*password;		/* password of local forward socks5 */
 }       Forward;
 /* Data structure for representing option data. */
 

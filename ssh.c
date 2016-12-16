@@ -1340,6 +1340,8 @@ ssh_init_forwarding(void)
 		    options.local_forwards[i].listen_port,
 		    options.local_forwards[i].connect_host,
 		    options.local_forwards[i].connect_port,
+		    options.local_forwards[i].username,
+		    options.local_forwards[i].password,
 		    options.gateway_ports);
 	}
 	if (i > 0 && success != i && options.exit_on_forward_failure)

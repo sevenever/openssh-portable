@@ -311,6 +311,8 @@ channel_new(char *ctype, int type, int rfd, int wfd, int efd,
 	c->path = NULL;
 	c->listening_addr = NULL;
 	c->listening_port = 0;
+	c->username = NULL;
+	c->password = NULL;
 	c->ostate = CHAN_OUTPUT_OPEN;
 	c->istate = CHAN_INPUT_OPEN;
 	c->flags = 0;
@@ -419,6 +421,10 @@ channel_free(Channel *c)
 	c->path = NULL;
 	free(c->listening_addr);
 	c->listening_addr = NULL;
+	free(c->username);
+	c->username = NULL;
+	free(c->password);
+	c->password = NULL;
 	while ((cc = TAILQ_FIRST(&c->status_confirms)) != NULL) {
 		if (cc->abandon_cb != NULL)
 			cc->abandon_cb(c, cc->ctx);
@@ -1126,8 +1132,10 @@ channel_decode_socks4(Channel *c, fd_set *readset, fd_set *writeset)
 }
 
 /* try to decode a socks5 header */
-#define SSH_SOCKS5_AUTHDONE	0x1000
+#define SSH_SOCKS5_AUTHPENDING	0x1000
+#define SSH_SOCKS5_AUTHDONE	0x2000
 #define SSH_SOCKS5_NOAUTH	0x00
+#define SSH_SOCKS5_AUTH_PW	0x02
 #define SSH_SOCKS5_IPV4		0x01
 #define SSH_SOCKS5_DOMAIN	0x03
 #define SSH_SOCKS5_IPV6		0x04
@@ -1145,41 +1153,92 @@ channel_decode_socks5(Channel *c, fd_set *readset, fd_set *writeset)
 		u_int8_t atyp;
 	} s5_req, s5_rsp;
 	u_int16_t dest_port;
+	char username[255+1], password[255+1];
 	char dest_addr[255+1], ntop[INET6_ADDRSTRLEN];
-	u_char *p;
-	u_int have, need, i, found, nmethods, addrlen, af;
+	u_char *p, auth_mtd;
+	u_int have, need, i, found, nmethods, userlen, pwlen, addrlen, af;
 
 	debug2("channel %d: decode socks5", c->self);
 	p = buffer_ptr(&c->input);
-	if (p[0] != 0x05)
+	if (p[0] != 0x05 && !(p[0] == 0x01 && c->flags & SSH_SOCKS5_AUTHPENDING))
 		return -1;
 	have = buffer_len(&c->input);
 	if (!(c->flags & SSH_SOCKS5_AUTHDONE)) {
-		/* format: ver | nmethods | methods */
-		if (have < 2)
-			return 0;
-		nmethods = p[1];
-		if (have < nmethods + 2)
-			return 0;
-		/* look for method: "NO AUTHENTICATION REQUIRED" */
-		for (found = 0, i = 2; i < nmethods + 2; i++) {
-			if (p[i] == SSH_SOCKS5_NOAUTH) {
-				found = 1;
-				break;
+		if (!(c->flags & SSH_SOCKS5_AUTHPENDING)) {
+			/* format: ver | nmethods | methods */
+			if (have < 2)
+				return 0;
+			nmethods = p[1];
+			if (have < nmethods + 2)
+				return 0;
+			/* look for method: "NO AUTHENTICATION REQUIRED" */
+			for (found = 0, i = 2; i < nmethods + 2; i++) {
+				if (c->username && c->password) {
+					if (p[i] == SSH_SOCKS5_AUTH_PW) {
+						auth_mtd = p[i];
+						found = 1;
+						break;
+					}
+				} else if (p[i] == SSH_SOCKS5_NOAUTH) {
+					auth_mtd = p[i];
+					found = 1;
+					break;
+				}
+			}
+			if (!found) {
+				if (c->username && c->password)
+					debug("channel %d: method SSH_SOCKS5_AUTH_PW not found",
+						c->self);
+				else
+					debug("channel %d: method SSH_SOCKS5_NOAUTH not found",
+						c->self);
+				return -1;
+			}
+			buffer_consume(&c->input, nmethods + 2);
+			buffer_put_char(&c->output, 0x05);		/* version */
+			buffer_put_char(&c->output, auth_mtd);	/* method */
+			FD_SET(c->sock, writeset);
+			if (auth_mtd == SSH_SOCKS5_NOAUTH) {
+				c->flags |= SSH_SOCKS5_AUTHDONE;
+				debug2("channel %d: socks5 auth done", c->self);
+			} else {
+				c->flags |= SSH_SOCKS5_AUTHPENDING;
+				debug2("channel %d: socks5 auth mtd user/pw, waiting for usena"
+						"me and password", c->self);
+			}
+			return 0;				/* need more */
+		} else {
+			/* c->flags & SSH_SOCKS5_AUTHPENDING	 */
+			if (have < 2)
+				return 0;
+			userlen = p[1];
+			if (have < 2 + userlen + 1)
+				 return 0;
+			pwlen = p[2 + userlen];
+			if (have < 2 + userlen + 1 + pwlen)
+				return 0;
+			/* version number 0x01 and username length */
+			buffer_consume(&c->input, 2);
+			buffer_get(&c->input, &username, userlen);
+			username[userlen] = '\0';
+			buffer_consume(&c->input, 1);
+			buffer_get(&c->input, &password, pwlen);
+			password[pwlen] = '\0';
+
+			if (strncmp(username, c->username, 255) == 0 &&
+					strncmp(password, c->password, 255) == 0) {
+				buffer_put_char(&c->output, 0x01);		/* version */
+				buffer_put_char(&c->output, 0x00);		/* success */
+				FD_SET(c->sock, writeset);
+				c->flags |= SSH_SOCKS5_AUTHDONE;
+				debug2("channel %d: socks5 auth done", c->self);
+				return 0;/* need more */
+			} else {
+				debug("channel %d: username/password combination not valid",
+					c->self);
+				return -1;
 			}
 		}
-		if (!found) {
-			debug("channel %d: method SSH_SOCKS5_NOAUTH not found",
-			    c->self);
-			return -1;
-		}
-		buffer_consume(&c->input, nmethods + 2);
-		buffer_put_char(&c->output, 0x05);		/* version */
-		buffer_put_char(&c->output, SSH_SOCKS5_NOAUTH);	/* method */
-		FD_SET(c->sock, writeset);
-		c->flags |= SSH_SOCKS5_AUTHDONE;
-		debug2("channel %d: socks5 auth done", c->self);
-		return 0;				/* need more */
 	}
 	debug2("channel %d: socks5 post auth", c->self);
 	if (have < sizeof(s5_req)+1)
@@ -1299,6 +1358,13 @@ channel_pre_dynamic(Channel *c, fd_set *readset, fd_set *writeset)
 		break;
 	case 0x05:
 		ret = channel_decode_socks5(c, readset, writeset);
+		break;
+	case 0x01:
+		if (c->flags & SSH_SOCKS5_AUTHPENDING) {
+			ret = channel_decode_socks5(c, readset, writeset);
+		} else {
+			ret = -1;
+		}
 		break;
 	default:
 		ret = -1;
@@ -1505,6 +1571,10 @@ channel_post_port_listener(Channel *c, fd_set *readset, fd_set *writeset)
 		nc->host_port = c->host_port;
 		if (c->path != NULL)
 			nc->path = xstrdup(c->path);
+		if (c->username)
+			nc->username = xstrdup(c->username);
+		if (c->password)
+			nc->password = xstrdup(c->password);
 
 		if (nextstate != SSH_CHANNEL_DYNAMIC)
 			port_open_helper(nc, rtype);
@@ -2741,7 +2811,8 @@ channel_fwd_bind_addr(const char *listen_addr, int *wildcardp,
 static int
 channel_setup_fwd_listener(int type, const char *listen_addr,
     u_short listen_port, int *allocated_listen_port,
-    const char *host_to_connect, u_short port_to_connect, int gateway_ports)
+    const char *host_to_connect, u_short port_to_connect, int gateway_ports,
+	const char *username, const char *password)
 {
 	Channel *c;
 	int sock, r, success = 0, wildcard = 0, is_client;
@@ -2875,6 +2946,10 @@ channel_setup_fwd_listener(int type, const char *listen_addr,
 			c->listening_port = *allocated_listen_port;
 		else
 			c->listening_port = listen_port;
+		if (username)
+			c->username = xstrdup(username);
+		if (password)
+			c->password = xstrdup(password);
 		success = 1;
 	}
 	if (success == 0)
@@ -2942,11 +3017,12 @@ channel_cancel_lport_listener(const char *lhost, u_short lport,
 /* protocol local port fwd, used by ssh (and sshd in v1) */
 int
 channel_setup_local_fwd_listener(const char *listen_host, u_short listen_port,
-    const char *host_to_connect, u_short port_to_connect, int gateway_ports)
+    const char *host_to_connect, u_short port_to_connect,
+	const char *username, const char *password, int gateway_ports)
 {
 	return channel_setup_fwd_listener(SSH_CHANNEL_PORT_LISTENER,
 	    listen_host, listen_port, NULL, host_to_connect, port_to_connect,
-	    gateway_ports);
+	    gateway_ports, username, password);
 }
 
 /* protocol v2 remote port fwd, used by sshd */
@@ -2956,7 +3032,7 @@ channel_setup_remote_fwd_listener(const char *listen_address,
 {
 	return channel_setup_fwd_listener(SSH_CHANNEL_RPORT_LISTENER,
 	    listen_address, listen_port, allocated_listen_port,
-	    NULL, 0, gateway_ports);
+	    NULL, 0, gateway_ports, NULL, NULL);
 }
 
 /*
@@ -3105,7 +3181,7 @@ channel_input_port_forward_request(int is_root, int gateway_ports)
 
 	/* Initiate forwarding */
 	success = channel_setup_local_fwd_listener(NULL, port, hostname,
-	    host_port, gateway_ports);
+	    host_port, NULL, NULL, gateway_ports);
 
 	/* Free the argument string. */
 	free(hostname);
